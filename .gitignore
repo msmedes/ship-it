@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+ship-it
+
+# Bun
+bun.lockb
+
+# Config with secrets
+.config/
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test artifacts
+coverage/
+
+# Temp files
+*.log
+*.tmp

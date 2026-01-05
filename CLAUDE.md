@@ -58,6 +58,8 @@ Use `--list-locations` and `--list-types` to see available options.
 - Dev mode persists server IDs to `/tmp/ship-it-cleanup.json` to survive crashes
 - Config stored in `~/.config/ship-it/config.json` or `HETZNER_API_TOKEN` env var
 
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed flow diagrams.
+
 ## TODO
 
 - [ ] SSH key selection during server creation

@@ -165,6 +165,99 @@ sequenceDiagram
     App-->>User: Exit 0
 ```
 
+## Full Deploy Orchestration (deploy.ts)
+
+```mermaid
+flowchart TD
+    START[fullDeploy] --> DETECT[Detect Project Type]
+    DETECT --> SSH_KEY[Generate SSH Key Locally]
+    SSH_KEY --> HETZNER_KEY[Upload Key to Hetzner]
+    HETZNER_KEY --> FIREWALL[Create/Get Firewall]
+    FIREWALL --> SERVER[Create Server with SSH Key]
+    SERVER --> APPLY_FW[Apply Firewall to Server]
+    APPLY_FW --> WAIT[Wait for Server Running]
+    WAIT --> SSH_WAIT[Wait for SSH Available]
+
+    SSH_WAIT --> SETUP_SERVER[Setup Server]
+    subgraph Server Setup
+        SETUP_SERVER --> APT[apt-get update/upgrade]
+        APT --> DOCKER[Install Docker]
+        DOCKER --> DEPS[Install git, curl]
+        DEPS --> DIRS[Create /opt/app directory]
+    end
+
+    DIRS --> DOCKERFILE{Has Dockerfile?}
+    DOCKERFILE -->|no| GEN_DOCKER[Generate Dockerfile]
+    DOCKERFILE -->|yes| DEPLOY_YML
+    GEN_DOCKER --> DEPLOY_YML[Generate deploy.yml]
+    DEPLOY_YML --> SECRETS[Generate .kamal/secrets from .env]
+    SECRETS --> KAMAL_CHECK{Kamal installed?}
+    KAMAL_CHECK -->|no| ERROR[Error: Install kamal]
+    KAMAL_CHECK -->|yes| KAMAL_SETUP[kamal setup]
+    KAMAL_SETUP --> DONE[Deployed!]
+```
+
+## Project Detection Flow
+
+```mermaid
+flowchart TD
+    START[detectProject] --> DOCKERFILE{Dockerfile exists?}
+    DOCKERFILE -->|yes| HAS_DOCKER[hasDockerfile = true]
+    DOCKERFILE -->|no| NO_DOCKER[hasDockerfile = false]
+
+    HAS_DOCKER --> GEMFILE
+    NO_DOCKER --> GEMFILE
+
+    GEMFILE{Gemfile with rails?}
+    GEMFILE -->|yes| RAILS[type = rails, port = 3000]
+    GEMFILE -->|no| BUN_CHECK
+
+    BUN_CHECK{bun.lockb exists?}
+    BUN_CHECK -->|yes| BUN[type = bun, port = 3000]
+    BUN_CHECK -->|no| NODE_CHECK
+
+    NODE_CHECK{package.json exists?}
+    NODE_CHECK -->|yes| NODE[type = node, port = 3000]
+    NODE_CHECK -->|no| GENERIC[type = generic, port = 3000]
+
+    RAILS --> DONE[Return ProjectInfo]
+    BUN --> DONE
+    NODE --> DONE
+    GENERIC --> DONE
+```
+
+## SSH Key Flow
+
+```mermaid
+sequenceDiagram
+    participant Ship as ship-it
+    participant Local as ~/.config/ship-it/keys/
+    participant Hetzner as Hetzner API
+    participant Server
+
+    Ship->>Local: generateSSHKey(name)
+    alt Key exists
+        Local-->>Ship: Return existing key
+    else Key doesn't exist
+        Ship->>Local: ssh-keygen -t ed25519
+        Local-->>Ship: Return new key pair
+    end
+
+    Ship->>Hetzner: ensureSSHKey(name, publicKey)
+    alt Key exists in Hetzner
+        Hetzner-->>Ship: Return existing
+    else Key doesn't exist
+        Hetzner->>Hetzner: Create SSH key
+        Hetzner-->>Ship: Return new key
+    end
+
+    Ship->>Hetzner: createServer with ssh_keys=[name]
+    Hetzner->>Server: Provision with public key
+
+    Ship->>Server: SSH using private key
+    Server-->>Ship: Connected!
+```
+
 ## File Dependencies
 
 ```mermaid
@@ -190,7 +283,10 @@ flowchart BT
         HETZNER[hetzner.ts]
         HETZNER_MOCK[hetzner-mock.ts]
         HETZNER_CTX[hetzner-context.tsx]
+        SSH[ssh.ts]
+        PROJECT[project.ts]
         KAMAL[kamal.ts]
+        DEPLOY[deploy.ts]
     end
 
     INDEX --> APP
@@ -218,4 +314,14 @@ flowchart BT
     RUNNER --> CONFIG
     RUNNER --> CLEANUP
     RUNNER --> KAMAL
+
+    DEPLOY --> SSH
+    DEPLOY --> HETZNER
+    DEPLOY --> KAMAL
+    DEPLOY --> PROJECT
+
+    KAMAL --> SSH
+    PROJECT --> |generates| DOCKERFILE[Dockerfile]
+    PROJECT --> |generates| DEPLOY_YML[deploy.yml]
+    PROJECT --> |generates| SECRETS[.kamal/secrets]
 ```

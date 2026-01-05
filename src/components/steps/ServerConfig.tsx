@@ -6,15 +6,15 @@ import Spinner from "ink-spinner";
 import { useHetzner } from "../../lib/hetzner-context.js";
 import type { ServerType, Location } from "../../lib/hetzner.js";
 
-interface ServerCreateProps {
+interface ServerConfigProps {
   hetznerToken: string;
-  onNext: (serverIp: string, serverId: number) => void;
+  onNext: (serverName: string, location: string, serverType: string) => void;
   onBack: () => void;
 }
 
-type Step = "loading" | "name" | "location" | "type" | "confirm" | "creating" | "error";
+type Step = "loading" | "name" | "location" | "type" | "confirm";
 
-export function ServerCreate({ hetznerToken, onNext, onBack }: ServerCreateProps) {
+export function ServerConfig({ hetznerToken, onNext, onBack }: ServerConfigProps) {
   const { client } = useHetzner();
   const [step, setStep] = useState<Step>("loading");
   const [serverTypes, setServerTypes] = useState<ServerType[]>([]);
@@ -25,11 +25,13 @@ export function ServerCreate({ hetznerToken, onNext, onBack }: ServerCreateProps
   const [error, setError] = useState<string | null>(null);
 
   useInput((input, key) => {
-    if (key.escape && step !== "creating") {
+    if (key.escape) {
       if (step === "type") {
         setStep("location");
       } else if (step === "location") {
         setStep("name");
+      } else if (step === "confirm") {
+        setStep("type");
       } else {
         onBack();
       }
@@ -48,7 +50,6 @@ export function ServerCreate({ hetznerToken, onNext, onBack }: ServerCreateProps
         setStep("name");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load data");
-        setStep("error");
       }
     }
     loadData();
@@ -56,7 +57,7 @@ export function ServerCreate({ hetznerToken, onNext, onBack }: ServerCreateProps
 
   const handleNameSubmit = (name: string) => {
     if (!name.trim()) return;
-    setServerName(name);
+    setServerName(name.trim().toLowerCase().replace(/[^a-z0-9-]/g, "-"));
     setStep("location");
   };
 
@@ -65,20 +66,16 @@ export function ServerCreate({ hetznerToken, onNext, onBack }: ServerCreateProps
     setStep("type");
   };
 
-  const handleTypeSelect = async (item: { value: ServerType }) => {
+  const handleTypeSelect = (item: { value: ServerType }) => {
     setSelectedType(item.value);
-    setStep("creating");
+    setStep("confirm");
+  };
 
-    try {
-      const server = await client.createServer(hetznerToken, {
-        name: serverName,
-        serverType: item.value.name,
-        location: selectedLocation!.name,
-      });
-      onNext(server.public_net.ipv4.ip, server.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create server");
-      setStep("error");
+  const handleConfirm = (item: { value: string }) => {
+    if (item.value === "yes") {
+      onNext(serverName, selectedLocation!.name, selectedType!.name);
+    } else {
+      setStep("name");
     }
   };
 
@@ -86,6 +83,15 @@ export function ServerCreate({ hetznerToken, onNext, onBack }: ServerCreateProps
     const price = serverType.prices.find((p) => p.location === locationName);
     return price?.price_monthly?.gross || "?";
   };
+
+  if (error) {
+    return (
+      <Box flexDirection="column">
+        <Text color="red">Error: {error}</Text>
+        <Text dimColor>Press Escape to go back</Text>
+      </Box>
+    );
+  }
 
   if (step === "loading") {
     return (
@@ -98,19 +104,10 @@ export function ServerCreate({ hetznerToken, onNext, onBack }: ServerCreateProps
     );
   }
 
-  if (step === "error") {
-    return (
-      <Box flexDirection="column">
-        <Text color="red">Error: {error}</Text>
-        <Text dimColor>Press Escape to go back</Text>
-      </Box>
-    );
-  }
-
   if (step === "name") {
     return (
       <Box flexDirection="column">
-        <Text bold>Create Server</Text>
+        <Text bold>Server Configuration</Text>
         <Box marginTop={1}>
           <Text>Server name: </Text>
           <TextInput
@@ -128,22 +125,25 @@ export function ServerCreate({ hetznerToken, onNext, onBack }: ServerCreateProps
   }
 
   if (step === "location") {
-    // Group locations by region
     const regions = new Map<string, Location[]>();
     for (const loc of locations) {
-      const region = loc.country === "US" ? "Americas" :
-                     loc.country === "SG" ? "Asia Pacific" : "Europe";
+      const region =
+        loc.country === "US"
+          ? "Americas"
+          : loc.country === "SG"
+            ? "Asia Pacific"
+            : "Europe";
       if (!regions.has(region)) {
         regions.set(region, []);
       }
       regions.get(region)!.push(loc);
     }
 
-    // Flatten with region headers
-    const items: Array<{ label: string; value: Location }> = [];
+    const items: Array<{ key: string; label: string; value: Location }> = [];
     for (const [region, locs] of regions) {
       for (const loc of locs) {
         items.push({
+          key: loc.name,
           label: `[${region}] ${loc.city}, ${loc.country} (${loc.name})`,
           value: loc,
         });
@@ -153,6 +153,9 @@ export function ServerCreate({ hetznerToken, onNext, onBack }: ServerCreateProps
     return (
       <Box flexDirection="column">
         <Text bold>Select Location</Text>
+        <Box marginTop={1}>
+          <Text dimColor>Server: {serverName}</Text>
+        </Box>
         <Box marginTop={1} flexDirection="column">
           <SelectInput items={items} onSelect={handleLocationSelect} limit={10} />
         </Box>
@@ -164,12 +167,15 @@ export function ServerCreate({ hetznerToken, onNext, onBack }: ServerCreateProps
   }
 
   if (step === "type") {
-    // Filter to shared CPU types and show pricing for selected location
     const sharedTypes = serverTypes.filter(
-      (t) => t.name.startsWith("cx") || t.name.startsWith("cpx") || t.name.startsWith("cax")
+      (t) =>
+        t.name.startsWith("cx") ||
+        t.name.startsWith("cpx") ||
+        t.name.startsWith("cax")
     );
 
     const items = sharedTypes.map((t) => ({
+      key: t.name,
       label: `${t.name.padEnd(8)} ${t.cores} vCPU, ${String(t.memory).padStart(3)}GB RAM, ${String(t.disk).padStart(4)}GB disk  €${getPriceForLocation(t, selectedLocation!.name)}/mo`,
       value: t,
     }));
@@ -178,29 +184,49 @@ export function ServerCreate({ hetznerToken, onNext, onBack }: ServerCreateProps
       <Box flexDirection="column">
         <Text bold>Select Server Type</Text>
         <Box marginTop={1}>
-          <Text dimColor>Location: {selectedLocation!.city}, {selectedLocation!.country}</Text>
+          <Text dimColor>
+            {serverName} in {selectedLocation!.city}
+          </Text>
         </Box>
         <Box marginTop={1} flexDirection="column">
           <SelectInput items={items} onSelect={handleTypeSelect} limit={12} />
         </Box>
         <Box marginTop={1}>
-          <Text dimColor>Press Escape to go back to location selection</Text>
+          <Text dimColor>Press Escape to go back</Text>
         </Box>
       </Box>
     );
   }
 
-  if (step === "creating") {
+  if (step === "confirm") {
     return (
       <Box flexDirection="column">
-        <Box>
-          <Text color="cyan">
-            <Spinner type="dots" />
+        <Text bold>Confirm Configuration</Text>
+        <Box marginTop={1} flexDirection="column" marginLeft={2}>
+          <Text>
+            <Text dimColor>Name:</Text> {serverName}
           </Text>
-          <Text> Creating server in {selectedLocation?.city}...</Text>
+          <Text>
+            <Text dimColor>Location:</Text> {selectedLocation!.city} ({selectedLocation!.name})
+          </Text>
+          <Text>
+            <Text dimColor>Type:</Text> {selectedType!.name} ({selectedType!.cores} vCPU, {selectedType!.memory}GB RAM)
+          </Text>
+          <Text>
+            <Text dimColor>Price:</Text> €{getPriceForLocation(selectedType!, selectedLocation!.name)}/mo
+          </Text>
         </Box>
         <Box marginTop={1}>
-          <Text dimColor>This may take a minute...</Text>
+          <Text>Deploy with this configuration?</Text>
+        </Box>
+        <Box marginTop={1}>
+          <SelectInput
+            items={[
+              { label: "Yes, deploy now", value: "yes" },
+              { label: "No, start over", value: "no" },
+            ]}
+            onSelect={handleConfirm}
+          />
         </Box>
       </Box>
     );

@@ -1,27 +1,33 @@
 import { useState, useEffect } from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useApp, useInput } from "ink";
 import { Welcome } from "./components/steps/Welcome.js";
-import { HetznerSetup } from "./components/steps/HetznerSetup.js";
-import { ServerCreate } from "./components/steps/ServerCreate.js";
-import { KamalInit } from "./components/steps/KamalInit.js";
+import { ConfigSetup } from "./components/steps/ConfigSetup.js";
+import { ServerConfig } from "./components/steps/ServerConfig.js";
+import { Deploy } from "./components/steps/Deploy.js";
 import { Complete } from "./components/steps/Complete.js";
+import { ErrorDisplay } from "./components/steps/ErrorDisplay.js";
 import { HetznerProvider } from "./lib/hetzner-context.js";
-import { initCleanup, trackServer } from "./lib/cleanup.js";
+import { initCleanup, runCleanup } from "./lib/cleanup.js";
 import type { RunMode } from "./lib/cli.js";
+import type { Config } from "./lib/config.js";
 
 export type WizardStep =
   | "welcome"
-  | "hetzner-setup"
-  | "server-create"
-  | "kamal-init"
-  | "complete";
+  | "config-setup"
+  | "server-config"
+  | "deploy"
+  | "complete"
+  | "error";
 
 export interface AppState {
-  hetznerToken?: string;
+  config?: Config;
+  serverName?: string;
+  location?: string;
+  serverType?: string;
   serverIp?: string;
   serverId?: number;
-  projectName?: string;
-  repoUrl?: string;
+  domain?: string;
+  error?: string;
 }
 
 interface AppProps {
@@ -29,6 +35,7 @@ interface AppProps {
 }
 
 export function App({ mode }: AppProps) {
+  const { exit } = useApp();
   const [step, setStep] = useState<WizardStep>("welcome");
   const [state, setState] = useState<AppState>({});
 
@@ -38,19 +45,20 @@ export function App({ mode }: AppProps) {
 
   // Initialize cleanup tracking in dev mode when we have a token
   useEffect(() => {
-    if (mode === "dev" && state.hetznerToken) {
-      initCleanup(state.hetznerToken);
+    if (mode === "dev" && state.config?.hetznerToken) {
+      initCleanup(state.config.hetznerToken);
     }
-  }, [mode, state.hetznerToken]);
+  }, [mode, state.config?.hetznerToken]);
 
-  const handleServerCreated = async (serverIp: string, serverId: number) => {
-    // Track server for cleanup in dev mode
-    if (mode === "dev") {
-      await trackServer(serverId);
+  // Handle Ctrl+C for cleanup in dev mode
+  useInput(async (input, key) => {
+    if (key.ctrl && input === "c") {
+      if (mode === "dev") {
+        await runCleanup();
+      }
+      exit();
     }
-    updateState({ serverIp, serverId });
-    setStep("kamal-init");
-  };
+  });
 
   const modeLabel =
     mode === "dry-run"
@@ -69,7 +77,7 @@ export function App({ mode }: AppProps) {
           <Text bold color="cyan">
             ship-it
           </Text>
-          <Text dimColor> — Kamal deployment setup</Text>
+          <Text dimColor> — Deploy to Hetzner with Kamal</Text>
           {modeLabel && <Text color={modeColor}>{modeLabel}</Text>}
         </Box>
 
@@ -89,38 +97,59 @@ export function App({ mode }: AppProps) {
           </Box>
         )}
 
-        {step === "welcome" && <Welcome onNext={() => setStep("hetzner-setup")} />}
+        {step === "welcome" && <Welcome onNext={() => setStep("config-setup")} />}
 
-        {step === "hetzner-setup" && (
-          <HetznerSetup
-            onNext={(token) => {
-              updateState({ hetznerToken: token });
-              setStep("server-create");
+        {step === "config-setup" && (
+          <ConfigSetup
+            onNext={(config) => {
+              updateState({ config });
+              setStep("server-config");
             }}
             onBack={() => setStep("welcome")}
           />
         )}
 
-        {step === "server-create" && (
-          <ServerCreate
-            hetznerToken={state.hetznerToken!}
-            onNext={handleServerCreated}
-            onBack={() => setStep("hetzner-setup")}
+        {step === "server-config" && (
+          <ServerConfig
+            hetznerToken={state.config!.hetznerToken!}
+            onNext={(serverName, location, serverType) => {
+              updateState({ serverName, location, serverType });
+              setStep("deploy");
+            }}
+            onBack={() => setStep("config-setup")}
           />
         )}
 
-        {step === "kamal-init" && (
-          <KamalInit
-            serverIp={state.serverIp!}
-            onNext={(projectName, repoUrl) => {
-              updateState({ projectName, repoUrl });
+        {step === "deploy" && (
+          <Deploy
+            config={state.config!}
+            serverName={state.serverName!}
+            location={state.location!}
+            serverType={state.serverType!}
+            mode={mode}
+            onComplete={(result) => {
+              updateState({
+                serverIp: result.serverIp,
+                domain: result.domain,
+              });
               setStep("complete");
             }}
-            onBack={() => setStep("server-create")}
+            onError={(error) => {
+              updateState({ error });
+              setStep("error");
+            }}
           />
         )}
 
         {step === "complete" && <Complete state={state} />}
+
+        {step === "error" && (
+          <ErrorDisplay
+            error={state.error!}
+            onRetry={() => setStep("deploy")}
+            onBack={() => setStep("server-config")}
+          />
+        )}
       </Box>
     </HetznerProvider>
   );

@@ -1,4 +1,4 @@
-import { Box, Text, useApp } from "ink";
+import { Box, Text } from "ink";
 import type { AppState } from "../../App.js";
 
 interface CompleteProps {
@@ -6,38 +6,37 @@ interface CompleteProps {
 }
 
 export function Complete({ state }: CompleteProps) {
-  const { exit } = useApp();
-
   return (
     <Box flexDirection="column">
       <Text bold color="green">
-        Setup Complete!
+        Deployment Complete!
       </Text>
-
-      <Box marginTop={1} flexDirection="column">
-        <Text>Your Kamal deployment is ready:</Text>
-      </Box>
 
       <Box marginTop={1} flexDirection="column" marginLeft={2}>
         <Text>
           <Text dimColor>Server IP:</Text> {state.serverIp}
         </Text>
         <Text>
-          <Text dimColor>Project:</Text> {state.projectName}
+          <Text dimColor>Domain:</Text> {state.domain}
         </Text>
         <Text>
-          <Text dimColor>Repository:</Text> {state.repoUrl}
+          <Text dimColor>Server ID:</Text> {state.serverId}
         </Text>
       </Box>
 
       <Box marginTop={1} flexDirection="column">
-        <Text bold>Next steps:</Text>
+        <Text bold>Your app is live at:</Text>
+        <Box marginLeft={2}>
+          <Text color="cyan">http://{state.domain}</Text>
+        </Box>
+      </Box>
+
+      <Box marginTop={1} flexDirection="column">
+        <Text bold>Useful commands:</Text>
         <Box flexDirection="column" marginLeft={2}>
-          <Text>1. cd into your project directory</Text>
-          <Text>2. Review config/deploy.yml</Text>
-          <Text>3. Set up your secrets in .kamal/secrets</Text>
-          <Text>4. Run: kamal setup</Text>
-          <Text>5. Deploy: kamal deploy</Text>
+          <Text dimColor>kamal app logs      </Text>
+          <Text dimColor>kamal deploy        </Text>
+          <Text dimColor>kamal app exec bash </Text>
         </Box>
       </Box>
 

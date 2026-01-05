@@ -30,6 +30,18 @@ export interface Server {
   };
 }
 
+export interface SSHKey {
+  id: number;
+  name: string;
+  fingerprint: string;
+  public_key: string;
+}
+
+export interface Firewall {
+  id: number;
+  name: string;
+}
+
 interface HetznerResponse<T> {
   data?: T;
   error?: { message: string; code: string };
@@ -141,4 +153,136 @@ export async function waitForServer(
   }
 
   throw new Error("Server creation timed out");
+}
+
+// SSH Key Management
+
+export async function getSSHKeys(token: string): Promise<SSHKey[]> {
+  const response = await hetznerFetch<{ ssh_keys: SSHKey[] }>(
+    "/ssh_keys",
+    token
+  );
+  return response.ssh_keys;
+}
+
+export async function getSSHKeyByName(token: string, name: string): Promise<SSHKey | null> {
+  const keys = await getSSHKeys(token);
+  return keys.find((k) => k.name === name) || null;
+}
+
+export async function createSSHKey(
+  token: string,
+  name: string,
+  publicKey: string
+): Promise<SSHKey> {
+  const response = await hetznerFetch<{ ssh_key: SSHKey }>(
+    "/ssh_keys",
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        public_key: publicKey,
+      }),
+    }
+  );
+  return response.ssh_key;
+}
+
+export async function deleteSSHKey(token: string, keyId: number): Promise<void> {
+  await hetznerFetch(`/ssh_keys/${keyId}`, token, { method: "DELETE" });
+}
+
+/**
+ * Get or create an SSH key in Hetzner.
+ * If a key with the same name exists, returns it.
+ */
+export async function ensureSSHKey(
+  token: string,
+  name: string,
+  publicKey: string
+): Promise<SSHKey> {
+  const existing = await getSSHKeyByName(token, name);
+  if (existing) {
+    return existing;
+  }
+  return createSSHKey(token, name, publicKey);
+}
+
+// Firewall Management
+
+export async function createFirewall(
+  token: string,
+  name: string
+): Promise<Firewall> {
+  const response = await hetznerFetch<{ firewall: Firewall }>(
+    "/firewalls",
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        rules: [
+          {
+            description: "SSH",
+            direction: "in",
+            protocol: "tcp",
+            port: "22",
+            source_ips: ["0.0.0.0/0", "::/0"],
+          },
+          {
+            description: "HTTP",
+            direction: "in",
+            protocol: "tcp",
+            port: "80",
+            source_ips: ["0.0.0.0/0", "::/0"],
+          },
+          {
+            description: "HTTPS",
+            direction: "in",
+            protocol: "tcp",
+            port: "443",
+            source_ips: ["0.0.0.0/0", "::/0"],
+          },
+        ],
+      }),
+    }
+  );
+  return response.firewall;
+}
+
+export async function applyFirewallToServer(
+  token: string,
+  firewallId: number,
+  serverId: number
+): Promise<void> {
+  await hetznerFetch(
+    `/firewalls/${firewallId}/actions/apply_to_resources`,
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        apply_to: [{ type: "server", server: { id: serverId } }],
+      }),
+    }
+  );
+}
+
+export async function getFirewallByName(token: string, name: string): Promise<Firewall | null> {
+  const response = await hetznerFetch<{ firewalls: Firewall[] }>(
+    "/firewalls",
+    token
+  );
+  return response.firewalls.find((f) => f.name === name) || null;
+}
+
+/**
+ * Get or create a firewall with standard web rules.
+ */
+export async function ensureFirewall(token: string, name: string): Promise<Firewall> {
+  const existing = await getFirewallByName(token, name);
+  if (existing) {
+    return existing;
+  }
+  return createFirewall(token, name);
 }

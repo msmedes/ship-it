@@ -53,6 +53,7 @@ export async function initCleanup(hetznerToken: string): Promise<void> {
  * Track a server for cleanup.
  */
 export async function trackServer(serverId: number): Promise<void> {
+  console.log(`[dev mode] Tracking server ${serverId} for cleanup`);
   state.serverIds.push(serverId);
   await persistState();
 }
@@ -110,6 +111,7 @@ export async function runCleanup(): Promise<void> {
 }
 
 async function handleExit(): Promise<void> {
+  console.log("\n[dev mode] Caught exit signal, cleaning up...");
   await runCleanup();
   process.exit(0);
 }

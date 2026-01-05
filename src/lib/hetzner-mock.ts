@@ -3,7 +3,7 @@
  * Simulates API responses with realistic delays.
  */
 
-import type { ServerType, Location, Server } from "./hetzner.js";
+import type { ServerType, Location, Server, SSHKey, Firewall } from "./hetzner.js";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -180,4 +180,84 @@ export async function waitForServer(
 ): Promise<Server> {
   await delay(1000); // Simulate waiting
   return getServer(_token, serverId);
+}
+
+// SSH Key mocks
+
+let mockSSHKeyId = 1000;
+
+export async function getSSHKeys(_token: string): Promise<SSHKey[]> {
+  await delay(200);
+  return [];
+}
+
+export async function getSSHKeyByName(_token: string, _name: string): Promise<SSHKey | null> {
+  await delay(100);
+  return null;
+}
+
+export async function createSSHKey(
+  _token: string,
+  name: string,
+  publicKey: string
+): Promise<SSHKey> {
+  await delay(300);
+  console.log(`[dry-run] Would create SSH key: ${name}`);
+  return {
+    id: mockSSHKeyId++,
+    name,
+    fingerprint: "mock:fingerprint",
+    public_key: publicKey,
+  };
+}
+
+export async function deleteSSHKey(_token: string, _keyId: number): Promise<void> {
+  await delay(200);
+}
+
+export async function ensureSSHKey(
+  token: string,
+  name: string,
+  publicKey: string
+): Promise<SSHKey> {
+  const existing = await getSSHKeyByName(token, name);
+  if (existing) {
+    return existing;
+  }
+  return createSSHKey(token, name, publicKey);
+}
+
+// Firewall mocks
+
+let mockFirewallId = 2000;
+
+export async function createFirewall(_token: string, name: string): Promise<Firewall> {
+  await delay(300);
+  console.log(`[dry-run] Would create firewall: ${name}`);
+  return {
+    id: mockFirewallId++,
+    name,
+  };
+}
+
+export async function applyFirewallToServer(
+  _token: string,
+  _firewallId: number,
+  _serverId: number
+): Promise<void> {
+  await delay(200);
+  console.log(`[dry-run] Would apply firewall to server`);
+}
+
+export async function getFirewallByName(_token: string, _name: string): Promise<Firewall | null> {
+  await delay(100);
+  return null;
+}
+
+export async function ensureFirewall(token: string, name: string): Promise<Firewall> {
+  const existing = await getFirewallByName(token, name);
+  if (existing) {
+    return existing;
+  }
+  return createFirewall(token, name);
 }

@@ -100,34 +100,19 @@ export async function installKamal(): Promise<void> {
  * Run kamal init to create initial config files.
  */
 export async function kamalInit(projectPath: string): Promise<void> {
-  console.log("\n$ kamal init");
   const proc = Bun.spawn(["kamal", "init"], {
     cwd: projectPath,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  // Stream output in real-time
-  const stdoutReader = proc.stdout.getReader();
-  const stderrReader = proc.stderr.getReader();
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const exitCode = await proc.exited;
 
-  const readStream = async (reader: ReadableStreamDefaultReader<Uint8Array>, stream: NodeJS.WriteStream) => {
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      stream.write(decoder.decode(value));
-    }
-  };
-
-  await Promise.all([
-    readStream(stdoutReader, process.stdout),
-    readStream(stderrReader, process.stderr),
-    proc.exited,
-  ]);
-
-  if (proc.exitCode !== 0) {
-    throw new Error(`kamal init exited with code ${proc.exitCode}`);
+  if (exitCode !== 0) {
+    const output = [stdout, stderr].filter(Boolean).join("\n").trim();
+    throw new Error(`kamal init failed:\n${output || "(no output)"}`);
   }
 }
 
@@ -135,34 +120,20 @@ export async function kamalInit(projectPath: string): Promise<void> {
  * Run kamal setup (first-time deployment).
  */
 export async function kamalSetup(projectPath: string): Promise<void> {
-  console.log("\n$ kamal setup");
   const proc = Bun.spawn(["kamal", "setup"], {
     cwd: projectPath,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  // Stream output in real-time
-  const stdoutReader = proc.stdout.getReader();
-  const stderrReader = proc.stderr.getReader();
+  // Collect output for error reporting
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const exitCode = await proc.exited;
 
-  const readStream = async (reader: ReadableStreamDefaultReader<Uint8Array>, stream: NodeJS.WriteStream) => {
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      stream.write(decoder.decode(value));
-    }
-  };
-
-  await Promise.all([
-    readStream(stdoutReader, process.stdout),
-    readStream(stderrReader, process.stderr),
-    proc.exited,
-  ]);
-
-  if (proc.exitCode !== 0) {
-    throw new Error(`kamal setup exited with code ${proc.exitCode}`);
+  if (exitCode !== 0) {
+    const output = [stdout, stderr].filter(Boolean).join("\n").trim();
+    throw new Error(`kamal setup failed:\n${output || "(no output)"}`);
   }
 }
 

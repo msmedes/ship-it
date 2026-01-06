@@ -51,12 +51,16 @@ export function App({ mode }: AppProps) {
   }, [mode, state.config?.hetznerToken]);
 
   // Handle Ctrl+C for cleanup in dev mode
-  useInput(async (input, key) => {
+  useInput((input, key) => {
     if (key.ctrl && input === "c") {
       if (mode === "dev") {
-        await runCleanup();
+        // Run cleanup then exit - don't use async in useInput callback
+        runCleanup().finally(() => {
+          exit();
+        });
+      } else {
+        exit();
       }
-      exit();
     }
   });
 

@@ -6,12 +6,16 @@ import { ServerConfig } from "./components/steps/ServerConfig.js";
 import { Deploy } from "./components/steps/Deploy.js";
 import { Complete } from "./components/steps/Complete.js";
 import { ErrorDisplay } from "./components/steps/ErrorDisplay.js";
+import { DashboardHome } from "./components/dashboard/DashboardHome.js";
 import { HetznerProvider } from "./lib/hetzner-context.js";
 import { initCleanup, runCleanup } from "./lib/cleanup.js";
+import { loadDeployments } from "./lib/storage.js";
 import type { RunMode } from "./lib/cli.js";
 import type { Config } from "./lib/config.js";
 
 export type WizardStep =
+  | "loading"
+  | "dashboard"
   | "welcome"
   | "config-setup"
   | "server-config"
@@ -36,12 +40,23 @@ interface AppProps {
 
 export function App({ mode }: AppProps) {
   const { exit } = useApp();
-  const [step, setStep] = useState<WizardStep>("welcome");
+  const [step, setStep] = useState<WizardStep>("loading");
   const [state, setState] = useState<AppState>({});
 
   const updateState = (updates: Partial<AppState>) => {
     setState((prev) => ({ ...prev, ...updates }));
   };
+
+  // Check for existing deployments on mount
+  useEffect(() => {
+    loadDeployments().then((deployments) => {
+      if (deployments.length > 0) {
+        setStep("dashboard");
+      } else {
+        setStep("welcome");
+      }
+    });
+  }, []);
 
   // Initialize cleanup tracking in dev mode when we have a token
   useEffect(() => {
@@ -101,6 +116,12 @@ export function App({ mode }: AppProps) {
           </Box>
         )}
 
+        {step === "loading" && <Text dimColor>Loading...</Text>}
+
+        {step === "dashboard" && (
+          <DashboardHome onNewDeployment={() => setStep("welcome")} />
+        )}
+
         {step === "welcome" && <Welcome onNext={() => setStep("config-setup")} />}
 
         {step === "config-setup" && (
@@ -145,7 +166,9 @@ export function App({ mode }: AppProps) {
           />
         )}
 
-        {step === "complete" && <Complete state={state} />}
+        {step === "complete" && (
+          <Complete state={state} onDone={() => setStep("dashboard")} />
+        )}
 
         {step === "error" && (
           <ErrorDisplay

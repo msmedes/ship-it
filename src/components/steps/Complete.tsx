@@ -1,11 +1,18 @@
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import type { AppState } from "../../App.js";
 
 interface CompleteProps {
   state: AppState;
+  onDone?: () => void;
 }
 
-export function Complete({ state }: CompleteProps) {
+export function Complete({ state, onDone }: CompleteProps) {
+  useInput((input, key) => {
+    if (key.return && onDone) {
+      onDone();
+    }
+  });
+
   return (
     <Box flexDirection="column">
       <Text bold color="green">
@@ -27,7 +34,7 @@ export function Complete({ state }: CompleteProps) {
       <Box marginTop={1} flexDirection="column">
         <Text bold>Your app is live at:</Text>
         <Box marginLeft={2}>
-          <Text color="cyan">http://{state.domain}</Text>
+          <Text color="cyan">https://{state.domain}</Text>
         </Box>
       </Box>
 
@@ -41,7 +48,7 @@ export function Complete({ state }: CompleteProps) {
       </Box>
 
       <Box marginTop={1}>
-        <Text dimColor>Press Ctrl+C to exit</Text>
+        <Text dimColor>Press Enter to go to dashboard, or Ctrl+C to exit</Text>
       </Box>
     </Box>
   );

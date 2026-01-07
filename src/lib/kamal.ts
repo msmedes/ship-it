@@ -233,6 +233,57 @@ export async function kamalDetails(projectPath: string): Promise<string> {
 }
 
 /**
+ * Rollback to a previous version.
+ */
+export async function kamalRollback(projectPath: string, version?: string): Promise<void> {
+  if (version) {
+    const proc = Bun.spawn(["kamal", "rollback", version], {
+      cwd: projectPath,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      throw new Error(`kamal rollback exited with code ${exitCode}`);
+    }
+  } else {
+    // Rollback to previous version
+    const proc = Bun.spawn(["kamal", "rollback"], {
+      cwd: projectPath,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      throw new Error(`kamal rollback exited with code ${exitCode}`);
+    }
+  }
+}
+
+/**
+ * Restart the app.
+ */
+export async function kamalRestart(projectPath: string): Promise<void> {
+  const proc = Bun.spawn(["kamal", "app", "boot"], {
+    cwd: projectPath,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    throw new Error(`kamal app boot exited with code ${exitCode}`);
+  }
+}
+
+/**
+ * Get app version/status.
+ */
+export async function kamalVersion(projectPath: string): Promise<string> {
+  const result = await $`kamal app version`.cwd(projectPath).quiet();
+  return result.stdout.toString().trim();
+}
+
+/**
  * Legacy init function for backward compatibility with TUI.
  * TODO: Remove once TUI is updated to use fullDeploy.
  */

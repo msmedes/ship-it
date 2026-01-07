@@ -15,6 +15,8 @@ import {
   writeKamalSecrets,
   type ProjectInfo,
 } from "./project.js";
+import { saveDeployment } from "./storage.js";
+import type { ProjectDeployment } from "./types.js";
 import type { RunMode } from "./cli.js";
 import type { Config } from "./config.js";
 
@@ -313,10 +315,27 @@ export async function fullDeploy(
     );
   }
 
+  const finalDomain = domain || `${serverIp}.nip.io`;
+
+  // Persist deployment for dashboard
+  const deployment: ProjectDeployment = {
+    id: crypto.randomUUID(),
+    projectPath,
+    projectName: projectInfo.name,
+    serverId: server.id,
+    serverIp,
+    serverName,
+    domain: finalDomain,
+    createdAt: new Date().toISOString(),
+    lastDeployedAt: new Date().toISOString(),
+    status: "running",
+  };
+  await saveDeployment(deployment);
+
   return {
     serverIp,
     serverId: server.id,
-    domain: domain || `${serverIp}.nip.io`,
+    domain: finalDomain,
     projectInfo,
   };
 }

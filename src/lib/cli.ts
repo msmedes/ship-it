@@ -1,8 +1,17 @@
 export type RunMode = "production" | "dev" | "dry-run";
 
+export type Command =
+  | { type: "tui" }
+  | { type: "deploy" }
+  | { type: "preview"; action: "create" | "list" | "delete"; ref?: string; hash?: string }
+  | { type: "list-locations" }
+  | { type: "list-types" }
+  | { type: "help" };
+
 export interface CliOptions {
   mode: RunMode;
   interactive: boolean;
+  command: Command;
   // Non-interactive options
   token?: string;
   serverName?: string;
@@ -10,7 +19,7 @@ export interface CliOptions {
   serverType?: string;
   projectName?: string;
   repoUrl?: string;
-  // Info commands
+  // Deprecated - use command instead
   listLocations?: boolean;
   listTypes?: boolean;
 }
@@ -19,7 +28,33 @@ export function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     mode: "production",
     interactive: true,
+    command: { type: "tui" },
   };
+
+  // Check for subcommands first
+  const firstArg = args[0];
+  if (firstArg === "preview") {
+    options.interactive = false;
+    const action = args[1];
+    if (action === "create") {
+      options.command = { type: "preview", action: "create", ref: args[2] || "HEAD" };
+    } else if (action === "list" || action === "ls") {
+      options.command = { type: "preview", action: "list" };
+    } else if (action === "delete" || action === "rm") {
+      const hash = args[2];
+      if (!hash) {
+        console.error("Error: preview delete requires a hash");
+        console.error("Usage: ship-it preview delete <hash>");
+        process.exit(1);
+      }
+      options.command = { type: "preview", action: "delete", hash };
+    } else {
+      console.error(`Unknown preview command: ${action}`);
+      console.error("Usage: ship-it preview <create|list|delete>");
+      process.exit(1);
+    }
+    return options;
+  }
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -35,6 +70,7 @@ export function parseArgs(args: string[]): CliOptions {
       case "--non-interactive":
       case "-n":
         options.interactive = false;
+        options.command = { type: "deploy" };
         break;
       case "--token":
       case "-t":
@@ -67,15 +103,17 @@ export function parseArgs(args: string[]): CliOptions {
       case "--list-locations":
         options.listLocations = true;
         options.interactive = false;
+        options.command = { type: "list-locations" };
         break;
       case "--list-types":
         options.listTypes = true;
         options.interactive = false;
+        options.command = { type: "list-types" };
         break;
       case "--help":
       case "-h":
-        printHelp();
-        process.exit(0);
+        options.command = { type: "help" };
+        options.interactive = false;
         break;
     }
   }
@@ -110,38 +148,39 @@ export function validateNonInteractiveOptions(options: CliOptions): string[] {
   return errors;
 }
 
-function printHelp() {
+export function printHelp() {
   console.log(`
-ship-it - Kamal deployment setup
+ship-it - Deploy to Hetzner with Kamal
 
-Usage: ship-it [options]
+Usage: ship-it [command] [options]
 
-Modes:
-  (default)        Interactive TUI wizard
-  --non-interactive, -n  Run without TUI (requires flags below)
-  --dry-run        Use mocked Hetzner API (no real servers)
-  --dev            Real API, but auto-cleanup servers on exit
+Commands:
+  (default)              Interactive TUI dashboard
+  preview create [ref]   Create a preview deploy (default: HEAD)
+  preview list           List active previews
+  preview delete <hash>  Delete a preview
 
-Non-interactive options:
+Options:
+  --dry-run              Use mocked Hetzner API (no real servers)
+  --dev                  Real API, but auto-cleanup servers on exit
+  -h, --help             Show this help message
+
+Non-interactive deploy:
+  -n, --non-interactive  Run deploy without TUI
   --token, -t <token>    Hetzner API token (or set HETZNER_API_TOKEN)
   --name <name>          Server name
   --location, -l <loc>   Location code (e.g., ash, fsn1, hel1)
   --type <type>          Server type (e.g., cx22, cx32)
-  --project, -p <name>   Project name for Kamal
-  --repo, -r <url>       Git repository URL
 
-Info commands:
+Info:
   --list-locations       List available Hetzner locations
   --list-types           List available server types with pricing
-  -h, --help             Show this help message
 
 Examples:
-  ship-it                              # Interactive wizard
-  ship-it --dry-run                    # Test wizard with mock API
-  ship-it --list-locations             # Show available locations
-  ship-it --list-types --location ash  # Show types with US pricing
-
-  ship-it -n --name my-server --location ash --type cx22 \\
-    --project myapp --repo git@github.com:user/repo.git
+  ship-it                              # Interactive dashboard
+  ship-it preview create               # Preview current commit
+  ship-it preview create feature-branch  # Preview a branch
+  ship-it preview list                 # Show active previews
+  ship-it preview delete abc1234       # Remove a preview
 `);
 }

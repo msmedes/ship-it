@@ -12,13 +12,21 @@ interface DashboardHomeProps {
   onNewDeployment: () => void;
 }
 
-type ActivePanel = "list" | "actions";
-type Action = "deploy" | "logs" | "restart" | "rollback" | "previews" | "delete";
+// An "instance" is either production or a preview - same actions apply to both
+interface Instance {
+  type: "production" | "preview";
+  name: string;
+  destination?: string; // kamal -d flag for previews
+  url: string;
+  hash?: string;
+}
+
+type ActivePanel = "projects" | "instances" | "actions";
+type Action = "deploy" | "logs" | "restart" | "rollback" | "delete";
 
 const ACTIONS: Array<{ id: Action; label: string; color?: string }> = [
   { id: "deploy", label: "Deploy" },
   { id: "logs", label: "View Logs" },
-  { id: "previews", label: "Previews" },
   { id: "restart", label: "Restart" },
   { id: "rollback", label: "Rollback" },
   { id: "delete", label: "Delete", color: "red" },
@@ -26,24 +34,76 @@ const ACTIONS: Array<{ id: Action; label: string; color?: string }> = [
 
 export function DashboardHome({ onNewDeployment }: DashboardHomeProps) {
   const { deployments, loading, error, refresh } = useDeployments();
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [activePanel, setActivePanel] = useState<ActivePanel>("list");
+
+  // Navigation state
+  const [activePanel, setActivePanel] = useState<ActivePanel>("projects");
+  const [projectIndex, setProjectIndex] = useState(0);
+  const [instanceIndex, setInstanceIndex] = useState(0);
   const [actionIndex, setActionIndex] = useState(0);
+
+  // Instance state
+  const [instances, setInstances] = useState<Instance[]>([]);
+  const [loadingInstances, setLoadingInstances] = useState(false);
+
+  // Action state
   const [running, setRunning] = useState<Action | null>(null);
   const [logs, setLogs] = useState<string | null>(null);
+  const [logsProc, setLogsProc] = useState<ReturnType<typeof Bun.spawn> | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  // Preview state
-  const [showPreviews, setShowPreviews] = useState(false);
-  const [previews, setPreviews] = useState<Preview[]>([]);
-  const [previewIndex, setPreviewIndex] = useState(0);
+  // New preview state
   const [creatingPreview, setCreatingPreview] = useState(false);
   const [previewRef, setPreviewRef] = useState("HEAD");
-  const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const totalListItems = deployments.length + 1; // +1 for "New deployment"
-  const selectedDeployment = selectedIndex < deployments.length ? deployments[selectedIndex] : null;
+  const totalProjects = deployments.length + 1; // +1 for "New"
+  const selectedProject = projectIndex < deployments.length ? deployments[projectIndex] : null;
+  const totalInstances = instances.length + 1; // +1 for "New preview"
+  const selectedInstance = instanceIndex < instances.length ? instances[instanceIndex] : null;
+
+  // Load instances when project changes
+  useEffect(() => {
+    if (selectedProject) {
+      loadInstances(selectedProject);
+    } else {
+      setInstances([]);
+    }
+  }, [selectedProject?.id]);
+
+  const loadInstances = async (project: ProjectDeployment) => {
+    setLoadingInstances(true);
+    // Multi-server deployments use HTTP (no auto-SSL with Kamal)
+    const isMultiServer = project.serverIds.length > 1;
+    const protocol = isMultiServer ? "http" : "https";
+    try {
+      const previews = await listPreviews(project.projectPath);
+      const allInstances: Instance[] = [
+        {
+          type: "production",
+          name: "production",
+          url: `${protocol}://${project.domain}`,
+        },
+        ...previews.map((p) => ({
+          type: "preview" as const,
+          name: p.hash,
+          destination: `preview-${p.hash}`,
+          url: p.url,
+          hash: p.hash,
+        })),
+      ];
+      setInstances(allInstances);
+    } catch {
+      setInstances([
+        {
+          type: "production",
+          name: "production",
+          url: `${protocol}://${project.domain}`,
+        },
+      ]);
+    } finally {
+      setLoadingInstances(false);
+    }
+  };
 
   useInput(async (input, key) => {
     if (running) return;
@@ -53,98 +113,106 @@ export function DashboardHome({ onNewDeployment }: DashboardHomeProps) {
       setCreatingPreview(false);
       return;
     }
-    if (creatingPreview) return; // TextInput handles other input
+    if (creatingPreview) return;
 
-    // Clear logs view
-    if (logs && (key.escape || input === "b")) {
+    // Logs view - escape to close and kill process
+    if (logs !== null && (key.escape || input === "b")) {
+      if (logsProc) {
+        logsProc.kill();
+        setLogsProc(null);
+      }
       setLogs(null);
       return;
     }
 
-    // Handle previews view
-    if (showPreviews) {
-      if (key.escape || input === "b") {
-        setShowPreviews(false);
-        setPreviewError(null);
-        return;
+    // Delete confirmation
+    if (confirmDelete) {
+      if (input === "y" || input === "Y") {
+        await handleDelete();
       }
-      const totalPreviewItems = previews.length + 1; // +1 for "New preview"
+      setConfirmDelete(false);
+      return;
+    }
+
+    // Tab to move right, Shift+Tab or b to move left
+    if (key.tab && !key.shift) {
+      if (activePanel === "projects" && selectedProject) {
+        setActivePanel("instances");
+        setInstanceIndex(0);
+      } else if (activePanel === "instances" && selectedInstance) {
+        setActivePanel("actions");
+        setActionIndex(0);
+      }
+      return;
+    }
+    if ((key.tab && key.shift) || input === "b") {
+      if (activePanel === "actions") {
+        setActivePanel("instances");
+      } else if (activePanel === "instances") {
+        setActivePanel("projects");
+      }
+      return;
+    }
+
+    // Panel-specific navigation
+    if (activePanel === "projects") {
       if (key.upArrow) {
-        setPreviewIndex((prev) => (prev > 0 ? prev - 1 : totalPreviewItems - 1));
+        setProjectIndex((i) => (i > 0 ? i - 1 : totalProjects - 1));
       } else if (key.downArrow) {
-        setPreviewIndex((prev) => (prev < totalPreviewItems - 1 ? prev + 1 : 0));
+        setProjectIndex((i) => (i < totalProjects - 1 ? i + 1 : 0));
       } else if (key.return) {
-        if (previewIndex === previews.length) {
-          // Create new preview
+        if (projectIndex === deployments.length) {
+          onNewDeployment();
+        } else {
+          setActivePanel("instances");
+          setInstanceIndex(0);
+        }
+      }
+    } else if (activePanel === "instances") {
+      if (key.upArrow) {
+        setInstanceIndex((i) => (i > 0 ? i - 1 : totalInstances - 1));
+      } else if (key.downArrow) {
+        setInstanceIndex((i) => (i < totalInstances - 1 ? i + 1 : 0));
+      } else if (key.return) {
+        if (instanceIndex === instances.length) {
+          // New preview
           setCreatingPreview(true);
           setPreviewRef("HEAD");
         } else {
-          // Delete selected preview
-          const preview = previews[previewIndex];
-          if (preview && selectedDeployment) {
-            setPreviewError(null);
-            try {
-              await deletePreview(selectedDeployment.projectPath, preview.hash);
-              const updated = await listPreviews(selectedDeployment.projectPath);
-              setPreviews(updated);
-              setPreviewIndex(0);
-            } catch (err) {
-              setPreviewError(err instanceof Error ? err.message : String(err));
-            }
-          }
-        }
-      }
-      return;
-    }
-
-    // Handle delete confirmation
-    if (confirmDelete) {
-      if (input === "y" || input === "Y") {
-        if (selectedDeployment) {
-          await removeDeployment(selectedDeployment.id);
-          await refresh();
-          setSelectedIndex(0);
-        }
-        setConfirmDelete(false);
-      } else {
-        setConfirmDelete(false);
-      }
-      return;
-    }
-
-    // Tab to switch panels (only if a project is selected)
-    if (key.tab && selectedDeployment) {
-      setActivePanel((p) => (p === "list" ? "actions" : "list"));
-      return;
-    }
-
-    if (activePanel === "list") {
-      if (key.upArrow) {
-        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : totalListItems - 1));
-      } else if (key.downArrow) {
-        setSelectedIndex((prev) => (prev < totalListItems - 1 ? prev + 1 : 0));
-      } else if (key.return) {
-        if (selectedIndex === deployments.length) {
-          onNewDeployment();
-        } else if (selectedDeployment) {
           setActivePanel("actions");
+          setActionIndex(0);
         }
       }
-    } else {
-      // Actions panel
+    } else if (activePanel === "actions") {
       if (key.upArrow) {
-        setActionIndex((prev) => (prev > 0 ? prev - 1 : ACTIONS.length - 1));
+        setActionIndex((i) => (i > 0 ? i - 1 : ACTIONS.length - 1));
       } else if (key.downArrow) {
-        setActionIndex((prev) => (prev < ACTIONS.length - 1 ? prev + 1 : 0));
-      } else if (key.return && selectedDeployment) {
-        await runAction(ACTIONS[actionIndex].id, selectedDeployment);
-      } else if (key.escape || input === "b") {
-        setActivePanel("list");
+        setActionIndex((i) => (i < ACTIONS.length - 1 ? i + 1 : 0));
+      } else if (key.return) {
+        await runAction(ACTIONS[actionIndex].id);
       }
     }
   });
 
-  const runAction = async (action: Action, deployment: ProjectDeployment) => {
+  const handleDelete = async () => {
+    if (!selectedProject || !selectedInstance) return;
+
+    if (selectedInstance.type === "production") {
+      // Delete project from ship-it
+      await removeDeployment(selectedProject.id);
+      await refresh();
+      setProjectIndex(0);
+      setActivePanel("projects");
+    } else {
+      // Delete preview
+      await deletePreview(selectedProject.projectPath, selectedInstance.hash!);
+      await loadInstances(selectedProject);
+      setInstanceIndex(0);
+    }
+  };
+
+  const runAction = async (action: Action) => {
+    if (!selectedProject || !selectedInstance) return;
     setActionError(null);
 
     if (action === "delete") {
@@ -152,34 +220,67 @@ export function DashboardHome({ onNewDeployment }: DashboardHomeProps) {
       return;
     }
 
-    if (action === "previews") {
-      // Load previews and show preview view
-      try {
-        const loadedPreviews = await listPreviews(deployment.projectPath);
-        setPreviews(loadedPreviews);
-        setPreviewIndex(0);
-        setShowPreviews(true);
-      } catch (err) {
-        setActionError(err instanceof Error ? err.message : String(err));
-      }
-      return;
-    }
+    const dest = selectedInstance.destination;
+    const destArgs = dest ? ["-d", dest] : [];
 
     setRunning(action);
     try {
       switch (action) {
         case "deploy":
-          await kamalDeploy(deployment.projectPath);
+          const deployProc = Bun.spawn(["kamal", "deploy", ...destArgs], {
+            cwd: selectedProject.projectPath,
+            stdout: "inherit",
+            stderr: "inherit",
+          });
+          await deployProc.exited;
           break;
         case "logs":
-          const logsOutput = await kamalLogs(deployment.projectPath, 50);
-          setLogs(logsOutput);
-          break;
+          // Start streaming logs with --follow
+          const proc = Bun.spawn(["kamal", "app", "logs", "-f", ...destArgs], {
+            cwd: selectedProject.projectPath,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          setLogsProc(proc);
+          setLogs("Loading logs...");
+
+          // Stream stdout
+          (async () => {
+            const reader = proc.stdout.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                // Keep last ~100 lines
+                const lines = buffer.split("\n");
+                if (lines.length > 100) {
+                  buffer = lines.slice(-100).join("\n");
+                }
+                setLogs(buffer);
+              }
+            } catch {
+              // Process killed
+            }
+          })();
+          return; // Don't setRunning(null) - logs view handles exit
         case "restart":
-          await kamalRestart(deployment.projectPath);
+          const restartProc = Bun.spawn(["kamal", "app", "boot", ...destArgs], {
+            cwd: selectedProject.projectPath,
+            stdout: "inherit",
+            stderr: "inherit",
+          });
+          await restartProc.exited;
           break;
         case "rollback":
-          await kamalRollback(deployment.projectPath);
+          const rollbackProc = Bun.spawn(["kamal", "rollback", ...destArgs], {
+            cwd: selectedProject.projectPath,
+            stdout: "inherit",
+            stderr: "inherit",
+          });
+          await rollbackProc.exited;
           break;
       }
     } catch (err) {
@@ -190,55 +291,43 @@ export function DashboardHome({ onNewDeployment }: DashboardHomeProps) {
   };
 
   const handleCreatePreview = async () => {
-    if (!selectedDeployment) return;
-    setPreviewError(null);
+    if (!selectedProject) return;
     setCreatingPreview(false);
-    setRunning("previews");
+    setRunning("deploy");
     try {
-      await createPreview(selectedDeployment.projectPath, previewRef);
-      const updated = await listPreviews(selectedDeployment.projectPath);
-      setPreviews(updated);
-      setPreviewIndex(0);
+      await createPreview(selectedProject.projectPath, previewRef);
+      await loadInstances(selectedProject);
+      setInstanceIndex(instances.length); // Select the new preview
     } catch (err) {
-      setPreviewError(err instanceof Error ? err.message : String(err));
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setRunning(null);
     }
   };
 
-  const getStatusColor = (status: ProjectDeployment["status"]) => {
-    switch (status) {
-      case "running":
-        return "green";
-      case "stopped":
-        return "red";
-      default:
-        return "yellow";
-    }
-  };
-
   if (loading) {
-    return <Text dimColor>Loading deployments...</Text>;
+    return <Text dimColor>Loading...</Text>;
   }
 
   if (error) {
-    return (
-      <Box flexDirection="column">
-        <Text color="red">Error: {error}</Text>
-      </Box>
-    );
+    return <Text color="red">Error: {error}</Text>;
   }
 
-  // Logs view (full screen)
-  if (logs) {
+  // Logs view (streaming)
+  if (logs !== null) {
     return (
       <Box flexDirection="column">
-        <Text bold>Logs: {selectedDeployment?.projectName}</Text>
+        <Box>
+          <Text bold>
+            Logs: {selectedProject?.projectName} / {selectedInstance?.name}
+          </Text>
+          <Text color="green"> (streaming)</Text>
+        </Box>
         <Box marginTop={1} flexDirection="column">
           <Text>{logs}</Text>
         </Box>
         <Box marginTop={1}>
-          <Text dimColor>Press Escape or b to go back</Text>
+          <Text dimColor>Press b or Escape to stop</Text>
         </Box>
       </Box>
     );
@@ -246,15 +335,19 @@ export function DashboardHome({ onNewDeployment }: DashboardHomeProps) {
 
   // Delete confirmation
   if (confirmDelete) {
+    const isProduction = selectedInstance?.type === "production";
     return (
       <Box flexDirection="column">
         <Text bold color="red">
-          Delete {selectedDeployment?.projectName}?
+          Delete {selectedInstance?.name}?
         </Text>
         <Box marginTop={1}>
-          <Text>This will remove the deployment from ship-it.</Text>
+          {isProduction ? (
+            <Text>This will remove the project from ship-it (server stays on Hetzner).</Text>
+          ) : (
+            <Text>This will remove the preview container.</Text>
+          )}
         </Box>
-        <Text dimColor>(The server will remain on Hetzner)</Text>
         <Box marginTop={1}>
           <Text>Press </Text>
           <Text color="red" bold>y</Text>
@@ -264,73 +357,22 @@ export function DashboardHome({ onNewDeployment }: DashboardHomeProps) {
     );
   }
 
-  // Previews view
-  if (showPreviews) {
+  // New preview input
+  if (creatingPreview) {
     return (
       <Box flexDirection="column">
-        <Text bold>Previews: {selectedDeployment?.projectName}</Text>
-
-        {running === "previews" && (
-          <Box marginTop={1}>
-            <Text color="yellow">Creating preview...</Text>
-          </Box>
-        )}
-
-        {creatingPreview ? (
-          <Box marginTop={1} flexDirection="column">
-            <Text>Git ref to preview:</Text>
-            <Box>
-              <Text color="cyan">&gt; </Text>
-              <TextInput
-                value={previewRef}
-                onChange={setPreviewRef}
-                onSubmit={handleCreatePreview}
-              />
-            </Box>
-            <Text dimColor>Enter a branch, tag, or commit hash (default: HEAD)</Text>
-          </Box>
-        ) : (
-          <Box marginTop={1} flexDirection="column">
-            {previews.length === 0 ? (
-              <Text dimColor>No active previews</Text>
-            ) : (
-              previews.map((preview, index) => (
-                <Box key={preview.hash} flexDirection="column">
-                  <Box>
-                    <Text color={previewIndex === index ? "cyan" : undefined}>
-                      {previewIndex === index ? "> " : "  "}
-                    </Text>
-                    <Text
-                      color={previewIndex === index ? "cyan" : undefined}
-                      bold={previewIndex === index}
-                    >
-                      {preview.hash}
-                    </Text>
-                    <Text dimColor> - {preview.url}</Text>
-                  </Box>
-                </Box>
-              ))
-            )}
-            <Box marginTop={1}>
-              <Text color={previewIndex === previews.length ? "cyan" : "green"}>
-                {previewIndex === previews.length ? "> " : "  "}+ New preview
-              </Text>
-            </Box>
-          </Box>
-        )}
-
-        {previewError && (
-          <Box marginTop={1}>
-            <Text color="red">Error: {previewError}</Text>
-          </Box>
-        )}
-
+        <Text bold>New Preview</Text>
         <Box marginTop={1}>
-          <Text dimColor>
-            {creatingPreview
-              ? "Enter to create | Escape to cancel"
-              : "Enter on preview to delete | Enter on New to create | b to go back"}
-          </Text>
+          <Text>Git ref: </Text>
+          <TextInput
+            value={previewRef}
+            onChange={setPreviewRef}
+            onSubmit={handleCreatePreview}
+          />
+        </Box>
+        <Text dimColor>Branch, tag, or commit (default: HEAD)</Text>
+        <Box marginTop={1}>
+          <Text dimColor>Enter to create | Escape to cancel</Text>
         </Box>
       </Box>
     );
@@ -338,99 +380,94 @@ export function DashboardHome({ onNewDeployment }: DashboardHomeProps) {
 
   return (
     <Box flexDirection="column">
-      <Box flexDirection="row" width={80}>
-        {/* Left panel: Project list */}
-        <Panel title="Projects" focused={activePanel === "list"} width={30}>
-        {deployments.length === 0 ? (
-          <Text dimColor>No deployments</Text>
-        ) : (
-          deployments.map((deployment, index) => (
-            <Box key={deployment.id}>
-              <Text color={selectedIndex === index ? "cyan" : undefined}>
-                {selectedIndex === index ? "> " : "  "}
-              </Text>
-              <Text
-                color={selectedIndex === index ? "cyan" : undefined}
-                bold={selectedIndex === index}
-              >
-                {deployment.projectName}
-              </Text>
-              <Text> </Text>
-              <Text color={getStatusColor(deployment.status)} dimColor>
-                [{deployment.status}]
-              </Text>
-            </Box>
-          ))
-        )}
-        <Box marginTop={1}>
-          <Text color={selectedIndex === deployments.length ? "cyan" : "green"}>
-            {selectedIndex === deployments.length ? "> " : "  "}+ New
-          </Text>
-        </Box>
-      </Panel>
-
-      {/* Right panel: Details & Actions */}
-      <Panel
-        title={selectedDeployment ? selectedDeployment.projectName : "Details"}
-        focused={activePanel === "actions"}
-        flexGrow={1}
-      >
-        {selectedDeployment ? (
-          <Box flexDirection="column">
-            <Box flexDirection="column" marginBottom={1}>
-              <Text>
-                <Text dimColor>IP:</Text> {selectedDeployment.serverIp}
-              </Text>
-              <Text>
-                <Text dimColor>Domain:</Text> {selectedDeployment.domain}
-              </Text>
-              <Text>
-                <Text dimColor>Path:</Text> {selectedDeployment.projectPath}
-              </Text>
-            </Box>
-
-            <Text bold dimColor>Actions</Text>
-            {ACTIONS.map((action, index) => (
-              <Box key={action.id}>
-                <Text
-                  color={
-                    activePanel === "actions" && actionIndex === index
-                      ? "cyan"
-                      : undefined
-                  }
-                >
-                  {activePanel === "actions" && actionIndex === index ? "> " : "  "}
+      <Box flexDirection="row">
+        {/* Projects panel */}
+        <Panel title="Projects" focused={activePanel === "projects"} width={24}>
+          {deployments.length === 0 ? (
+            <Text dimColor>No projects</Text>
+          ) : (
+            deployments.map((d, i) => (
+              <Box key={d.id}>
+                <Text color={projectIndex === i ? "cyan" : undefined}>
+                  {projectIndex === i ? "> " : "  "}
+                  {d.projectName}
                 </Text>
-                <Text
-                  color={
-                    action.color ||
-                    (activePanel === "actions" && actionIndex === index
-                      ? "cyan"
-                      : undefined)
-                  }
-                  bold={activePanel === "actions" && actionIndex === index}
-                >
-                  {action.label}
-                </Text>
-                {running === action.id && <Text dimColor> ...</Text>}
               </Box>
-            ))}
-
-            {actionError && (
-              <Box marginTop={1}>
-                <Text color="red">Error: {actionError}</Text>
-              </Box>
-            )}
+            ))
+          )}
+          <Box marginTop={1}>
+            <Text color={projectIndex === deployments.length ? "cyan" : "green"}>
+              {projectIndex === deployments.length ? "> " : "  "}+ New
+            </Text>
           </Box>
-        ) : (
-          <Text dimColor>Select a project</Text>
-        )}
-      </Panel>
+        </Panel>
+
+        {/* Instances panel */}
+        <Panel title="Instances" focused={activePanel === "instances"} width={30}>
+          {!selectedProject ? (
+            <Text dimColor>Select a project</Text>
+          ) : loadingInstances ? (
+            <Text dimColor>Loading...</Text>
+          ) : (
+            <>
+              {instances.map((inst, i) => (
+                <Box key={inst.name}>
+                  <Text color={instanceIndex === i ? "cyan" : undefined}>
+                    {instanceIndex === i ? "> " : "  "}
+                  </Text>
+                  <Text
+                    color={instanceIndex === i ? "cyan" : inst.type === "production" ? "green" : "yellow"}
+                    bold={instanceIndex === i}
+                  >
+                    {inst.name}
+                  </Text>
+                </Box>
+              ))}
+              <Box marginTop={1}>
+                <Text color={instanceIndex === instances.length ? "cyan" : "blue"}>
+                  {instanceIndex === instances.length ? "> " : "  "}+ New preview
+                </Text>
+              </Box>
+            </>
+          )}
+        </Panel>
+
+        {/* Actions panel */}
+        <Panel title="Actions" focused={activePanel === "actions"} flexGrow={1}>
+          {!selectedInstance ? (
+            <Text dimColor>Select an instance</Text>
+          ) : (
+            <>
+              <Text dimColor>{selectedInstance.url}</Text>
+              <Box marginTop={1} flexDirection="column">
+                {ACTIONS.map((action, i) => (
+                  <Box key={action.id}>
+                    <Text color={actionIndex === i && activePanel === "actions" ? "cyan" : undefined}>
+                      {actionIndex === i && activePanel === "actions" ? "> " : "  "}
+                    </Text>
+                    <Text
+                      color={action.color || (actionIndex === i && activePanel === "actions" ? "cyan" : undefined)}
+                      bold={actionIndex === i && activePanel === "actions"}
+                    >
+                      {action.label}
+                    </Text>
+                    {running === action.id && <Text dimColor> ...</Text>}
+                  </Box>
+                ))}
+              </Box>
+              {actionError && (
+                <Box marginTop={1}>
+                  <Text color="red">{actionError}</Text>
+                </Box>
+              )}
+            </>
+          )}
+        </Panel>
       </Box>
 
       <Box marginTop={1}>
         <Text dimColor>
-          ↑↓ navigate | Tab switch panels | Enter select | b back
+          ↑↓ navigate | Tab/Enter next | b back
         </Text>
       </Box>
     </Box>

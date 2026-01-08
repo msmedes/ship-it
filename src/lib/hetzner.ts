@@ -211,10 +211,52 @@ export async function ensureSSHKey(
 
 // Firewall Management
 
+export interface FirewallOptions {
+  accessoryPorts?: number[];
+}
+
 export async function createFirewall(
   token: string,
-  name: string
+  name: string,
+  options: FirewallOptions = {}
 ): Promise<Firewall> {
+  const rules = [
+    {
+      description: "SSH",
+      direction: "in",
+      protocol: "tcp",
+      port: "22",
+      source_ips: ["0.0.0.0/0", "::/0"],
+    },
+    {
+      description: "HTTP",
+      direction: "in",
+      protocol: "tcp",
+      port: "80",
+      source_ips: ["0.0.0.0/0", "::/0"],
+    },
+    {
+      description: "HTTPS",
+      direction: "in",
+      protocol: "tcp",
+      port: "443",
+      source_ips: ["0.0.0.0/0", "::/0"],
+    },
+  ];
+
+  // Add accessory ports (for dedicated DB server)
+  if (options.accessoryPorts) {
+    for (const port of options.accessoryPorts) {
+      rules.push({
+        description: `DB port ${port}`,
+        direction: "in",
+        protocol: "tcp",
+        port: String(port),
+        source_ips: ["0.0.0.0/0", "::/0"],
+      });
+    }
+  }
+
   const response = await hetznerFetch<{ firewall: Firewall }>(
     "/firewalls",
     token,
@@ -222,29 +264,7 @@ export async function createFirewall(
       method: "POST",
       body: JSON.stringify({
         name,
-        rules: [
-          {
-            description: "SSH",
-            direction: "in",
-            protocol: "tcp",
-            port: "22",
-            source_ips: ["0.0.0.0/0", "::/0"],
-          },
-          {
-            description: "HTTP",
-            direction: "in",
-            protocol: "tcp",
-            port: "80",
-            source_ips: ["0.0.0.0/0", "::/0"],
-          },
-          {
-            description: "HTTPS",
-            direction: "in",
-            protocol: "tcp",
-            port: "443",
-            source_ips: ["0.0.0.0/0", "::/0"],
-          },
-        ],
+        rules,
       }),
     }
   );
@@ -279,10 +299,179 @@ export async function getFirewallByName(token: string, name: string): Promise<Fi
 /**
  * Get or create a firewall with standard web rules.
  */
-export async function ensureFirewall(token: string, name: string): Promise<Firewall> {
+export async function ensureFirewall(
+  token: string,
+  name: string,
+  options: FirewallOptions = {}
+): Promise<Firewall> {
   const existing = await getFirewallByName(token, name);
   if (existing) {
     return existing;
   }
-  return createFirewall(token, name);
+  return createFirewall(token, name, options);
+}
+
+// Load Balancer Management
+
+export interface LoadBalancer {
+  id: number;
+  name: string;
+  public_net: {
+    enabled: boolean;
+    ipv4: { ip: string };
+    ipv6: { ip: string };
+  };
+  algorithm: { type: string };
+  services: Array<{
+    protocol: string;
+    listen_port: number;
+    destination_port: number;
+    proxyprotocol: boolean;
+  }>;
+  targets: Array<{
+    type: string;
+    server?: { id: number };
+    health_status?: Array<{ status: string }>;
+  }>;
+  load_balancer_type: {
+    id: number;
+    name: string;
+    description: string;
+  };
+}
+
+export interface CreateLoadBalancerOptions {
+  name: string;
+  location: string;
+  algorithm?: "round_robin" | "least_connections";
+  serverIds: number[];
+  listenPort?: number;
+  destinationPort?: number;
+}
+
+export async function createLoadBalancer(
+  token: string,
+  options: CreateLoadBalancerOptions
+): Promise<LoadBalancer> {
+  const {
+    name,
+    location,
+    algorithm = "round_robin",
+    serverIds,
+    listenPort = 443,
+    destinationPort = 443,
+  } = options;
+
+  const response = await hetznerFetch<{ load_balancer: LoadBalancer }>(
+    "/load_balancers",
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        load_balancer_type: "lb11", // Smallest type
+        location,
+        algorithm: { type: algorithm },
+        targets: serverIds.map((id) => ({
+          type: "server",
+          server: { id },
+          use_private_ip: false,
+        })),
+        services: [
+          {
+            protocol: "tcp",
+            listen_port: 80,
+            destination_port: 80,
+            proxyprotocol: false,
+          },
+          {
+            protocol: "tcp",
+            listen_port: listenPort,
+            destination_port: destinationPort,
+            proxyprotocol: false,
+          },
+        ],
+      }),
+    }
+  );
+
+  return response.load_balancer;
+}
+
+export async function getLoadBalancer(
+  token: string,
+  loadBalancerId: number
+): Promise<LoadBalancer> {
+  const response = await hetznerFetch<{ load_balancer: LoadBalancer }>(
+    `/load_balancers/${loadBalancerId}`,
+    token
+  );
+  return response.load_balancer;
+}
+
+export async function deleteLoadBalancer(
+  token: string,
+  loadBalancerId: number
+): Promise<void> {
+  await hetznerFetch(`/load_balancers/${loadBalancerId}`, token, {
+    method: "DELETE",
+  });
+}
+
+export async function addTargetToLoadBalancer(
+  token: string,
+  loadBalancerId: number,
+  serverId: number
+): Promise<void> {
+  await hetznerFetch(
+    `/load_balancers/${loadBalancerId}/actions/add_target`,
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        type: "server",
+        server: { id: serverId },
+        use_private_ip: false,
+      }),
+    }
+  );
+}
+
+export async function removeTargetFromLoadBalancer(
+  token: string,
+  loadBalancerId: number,
+  serverId: number
+): Promise<void> {
+  await hetznerFetch(
+    `/load_balancers/${loadBalancerId}/actions/remove_target`,
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        type: "server",
+        server: { id: serverId },
+      }),
+    }
+  );
+}
+
+/**
+ * Wait for a load balancer to have a public IP assigned.
+ */
+export async function waitForLoadBalancer(
+  token: string,
+  loadBalancerId: number,
+  timeoutMs = 60000
+): Promise<LoadBalancer> {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const lb = await getLoadBalancer(token, loadBalancerId);
+    if (lb.public_net?.ipv4?.ip) {
+      return lb;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+
+  throw new Error("Load balancer creation timed out");
 }

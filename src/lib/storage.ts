@@ -10,10 +10,33 @@ import type { ProjectDeployment } from "./types.js";
 const CONFIG_DIR = join(homedir(), ".config", "ship-it");
 const DEPLOYMENTS_FILE = join(CONFIG_DIR, "deployments.json");
 
+/**
+ * Migrate old single-server deployment format to new multi-server format.
+ */
+function migrateDeployment(d: Record<string, unknown>): ProjectDeployment {
+  // Check if it's the old format (has serverId instead of serverIds)
+  if (typeof d.serverId === "number" && !Array.isArray(d.serverIds)) {
+    return {
+      id: d.id as string,
+      projectPath: d.projectPath as string,
+      projectName: d.projectName as string,
+      serverIds: [d.serverId as number],
+      serverIps: [d.serverIp as string],
+      serverNames: [d.serverName as string],
+      domain: d.domain as string,
+      createdAt: d.createdAt as string,
+      lastDeployedAt: d.lastDeployedAt as string,
+      status: d.status as ProjectDeployment["status"],
+    };
+  }
+  return d as unknown as ProjectDeployment;
+}
+
 export async function loadDeployments(): Promise<ProjectDeployment[]> {
   try {
     const content = await readFile(DEPLOYMENTS_FILE, "utf-8");
-    return JSON.parse(content) as ProjectDeployment[];
+    const raw = JSON.parse(content) as Record<string, unknown>[];
+    return raw.map(migrateDeployment);
   } catch {
     return [];
   }

@@ -4,14 +4,17 @@ import Spinner from "ink-spinner";
 import { fullDeploy, type DeployStep } from "../../lib/deploy.js";
 import type { RunMode } from "../../lib/cli.js";
 import type { Config } from "../../lib/config.js";
+import type { AccessoriesConfig } from "../../lib/types.js";
 
 interface DeployProps {
   config: Config;
   serverName: string;
   location: string;
   serverType: string;
+  serverCount: number;
+  accessories?: AccessoriesConfig;
   mode: RunMode;
-  onComplete: (result: { serverIp: string; domain: string }) => void;
+  onComplete: (result: { serverIps: string[]; domain: string; loadBalancerIp?: string }) => void;
   onError: (error: string) => void;
 }
 
@@ -34,6 +37,8 @@ export function Deploy({
   serverName,
   location,
   serverType,
+  serverCount,
+  accessories,
   mode,
   onComplete,
   onError,
@@ -52,6 +57,8 @@ export function Deploy({
             serverName,
             location,
             serverType,
+            serverCount,
+            accessories,
             mode,
           },
           (updatedSteps) => {
@@ -64,8 +71,9 @@ export function Deploy({
 
         if (!cancelled) {
           onComplete({
-            serverIp: result.serverIp,
+            serverIps: result.serverIps,
             domain: result.domain,
+            loadBalancerIp: result.loadBalancerIp,
           });
         }
       } catch (err) {
@@ -80,7 +88,7 @@ export function Deploy({
     return () => {
       cancelled = true;
     };
-  }, [config, serverName, location, serverType, mode, onComplete, onError]);
+  }, [config, serverName, location, serverType, serverCount, accessories, mode, onComplete, onError]);
 
   return (
     <Box flexDirection="column">

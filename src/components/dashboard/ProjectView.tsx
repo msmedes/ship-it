@@ -128,7 +128,7 @@ export function ProjectView({ deployment, onBack, onDeleted }: ProjectViewProps)
     <Box flexDirection="column">
       <Box>
         <Text bold>{deployment.projectName}</Text>
-        <Text dimColor> — {deployment.serverIp}</Text>
+        <Text dimColor> — {deployment.serverIps[0]}</Text>
       </Box>
 
       <Box marginTop={1} flexDirection="column" marginLeft={2}>
@@ -136,8 +136,22 @@ export function ProjectView({ deployment, onBack, onDeleted }: ProjectViewProps)
           <Text dimColor>Domain:</Text> {deployment.domain}
         </Text>
         <Text>
-          <Text dimColor>Server:</Text> {deployment.serverName} (ID: {deployment.serverId})
+          <Text dimColor>Servers:</Text> {deployment.serverNames.join(", ")} ({deployment.serverIds.length} server{deployment.serverIds.length > 1 ? "s" : ""})
         </Text>
+        {deployment.loadBalancerId && (
+          <Text>
+            <Text dimColor>Load Balancer:</Text> {deployment.loadBalancerIp}
+          </Text>
+        )}
+        {deployment.accessories?.enabled && (
+          <Text>
+            <Text dimColor>Accessories:</Text>{" "}
+            {deployment.accessories.accessories.map((a) => a.type).join(", ")}
+            {deployment.accessories.placement === "dedicated-server" && deployment.accessories.serverIp && (
+              <Text dimColor> ({deployment.accessories.serverIp})</Text>
+            )}
+          </Text>
+        )}
         <Text>
           <Text dimColor>Path:</Text> {deployment.projectPath}
         </Text>

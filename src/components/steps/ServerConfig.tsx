@@ -8,11 +8,11 @@ import type { ServerType, Location } from "../../lib/hetzner.js";
 
 interface ServerConfigProps {
   hetznerToken: string;
-  onNext: (serverName: string, location: string, serverType: string) => void;
+  onNext: (serverName: string, location: string, serverType: string, serverCount: number) => void;
   onBack: () => void;
 }
 
-type Step = "loading" | "name" | "location" | "type" | "confirm";
+type Step = "loading" | "name" | "location" | "type" | "count" | "confirm";
 
 export function ServerConfig({ hetznerToken, onNext, onBack }: ServerConfigProps) {
   const { client } = useHetzner();
@@ -22,6 +22,7 @@ export function ServerConfig({ hetznerToken, onNext, onBack }: ServerConfigProps
   const [serverName, setServerName] = useState("");
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
   const [selectedType, setSelectedType] = useState<ServerType | null>(null);
+  const [serverCount, setServerCount] = useState("1");
   const [error, setError] = useState<string | null>(null);
 
   useInput((input, key) => {
@@ -30,8 +31,10 @@ export function ServerConfig({ hetznerToken, onNext, onBack }: ServerConfigProps
         setStep("location");
       } else if (step === "location") {
         setStep("name");
-      } else if (step === "confirm") {
+      } else if (step === "count") {
         setStep("type");
+      } else if (step === "confirm") {
+        setStep("count");
       } else {
         onBack();
       }
@@ -68,12 +71,26 @@ export function ServerConfig({ hetznerToken, onNext, onBack }: ServerConfigProps
 
   const handleTypeSelect = (item: { value: ServerType }) => {
     setSelectedType(item.value);
+    setStep("count");
+  };
+
+  const handleCountSubmit = (value: string) => {
+    const count = parseInt(value, 10);
+    if (isNaN(count) || count < 1) {
+      setServerCount("1");
+      return;
+    }
+    if (count > 10) {
+      setServerCount("10");
+      return;
+    }
+    setServerCount(String(count));
     setStep("confirm");
   };
 
   const handleConfirm = (item: { value: string }) => {
     if (item.value === "yes") {
-      onNext(serverName, selectedLocation!.name, selectedType!.name);
+      onNext(serverName, selectedLocation!.name, selectedType!.name, parseInt(serverCount, 10));
     } else {
       setStep("name");
     }
@@ -198,7 +215,56 @@ export function ServerConfig({ hetznerToken, onNext, onBack }: ServerConfigProps
     );
   }
 
+  if (step === "count") {
+    const count = parseInt(serverCount, 10);
+    const pricePerServer = parseFloat(getPriceForLocation(selectedType!, selectedLocation!.name));
+    const lbPrice = count > 1 ? 6 : 0; // ~€6/mo for lb11
+    const totalPrice = (pricePerServer * count + lbPrice).toFixed(2);
+
+    return (
+      <Box flexDirection="column">
+        <Text bold>Number of Servers</Text>
+        <Box marginTop={1}>
+          <Text dimColor>
+            {serverName} • {selectedType!.name} in {selectedLocation!.city}
+          </Text>
+        </Box>
+        <Box marginTop={1}>
+          <Text>How many servers? </Text>
+          <TextInput
+            value={serverCount}
+            onChange={setServerCount}
+            onSubmit={handleCountSubmit}
+          />
+        </Box>
+        <Box marginTop={1} flexDirection="column">
+          {count > 1 && (
+            <>
+              <Text color="blue">
+                Load balancer will be created automatically (~€6/mo)
+              </Text>
+              <Text color="yellow">
+                Note: Multi-server uses HTTP (no auto-SSL)
+              </Text>
+            </>
+          )}
+          <Text dimColor>
+            Estimated: €{totalPrice}/mo ({count} server{count > 1 ? "s" : ""}{count > 1 ? " + LB" : ""})
+          </Text>
+        </Box>
+        <Box marginTop={1}>
+          <Text dimColor>Press Escape to go back</Text>
+        </Box>
+      </Box>
+    );
+  }
+
   if (step === "confirm") {
+    const count = parseInt(serverCount, 10);
+    const pricePerServer = parseFloat(getPriceForLocation(selectedType!, selectedLocation!.name));
+    const lbPrice = count > 1 ? 6 : 0;
+    const totalPrice = (pricePerServer * count + lbPrice).toFixed(2);
+
     return (
       <Box flexDirection="column">
         <Text bold>Confirm Configuration</Text>
@@ -213,7 +279,15 @@ export function ServerConfig({ hetznerToken, onNext, onBack }: ServerConfigProps
             <Text dimColor>Type:</Text> {selectedType!.name} ({selectedType!.cores} vCPU, {selectedType!.memory}GB RAM)
           </Text>
           <Text>
-            <Text dimColor>Price:</Text> €{getPriceForLocation(selectedType!, selectedLocation!.name)}/mo
+            <Text dimColor>Servers:</Text> {count}
+          </Text>
+          {count > 1 && (
+            <Text>
+              <Text dimColor>Load Balancer:</Text> <Text color="blue">Yes (auto-provisioned)</Text>
+            </Text>
+          )}
+          <Text>
+            <Text dimColor>Price:</Text> €{totalPrice}/mo
           </Text>
         </Box>
         <Box marginTop={1}>

@@ -3,7 +3,7 @@
  * Simulates API responses with realistic delays.
  */
 
-import type { ServerType, Location, Server, SSHKey, Firewall } from "./hetzner.js";
+import type { ServerType, Location, Server, SSHKey, Firewall, LoadBalancer, CreateLoadBalancerOptions, FirewallOptions } from "./hetzner.js";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -231,9 +231,16 @@ export async function ensureSSHKey(
 
 let mockFirewallId = 2000;
 
-export async function createFirewall(_token: string, name: string): Promise<Firewall> {
+export async function createFirewall(
+  _token: string,
+  name: string,
+  options: FirewallOptions = {}
+): Promise<Firewall> {
   await delay(300);
-  console.log(`[dry-run] Would create firewall: ${name}`);
+  const ports = options.accessoryPorts?.length
+    ? ` with accessory ports: ${options.accessoryPorts.join(", ")}`
+    : "";
+  console.log(`[dry-run] Would create firewall: ${name}${ports}`);
   return {
     id: mockFirewallId++,
     name,
@@ -254,10 +261,98 @@ export async function getFirewallByName(_token: string, _name: string): Promise<
   return null;
 }
 
-export async function ensureFirewall(token: string, name: string): Promise<Firewall> {
+export async function ensureFirewall(
+  token: string,
+  name: string,
+  options: FirewallOptions = {}
+): Promise<Firewall> {
   const existing = await getFirewallByName(token, name);
   if (existing) {
     return existing;
   }
-  return createFirewall(token, name);
+  return createFirewall(token, name, options);
+}
+
+// Load Balancer mocks
+
+let mockLoadBalancerId = 3000;
+
+export async function createLoadBalancer(
+  _token: string,
+  options: CreateLoadBalancerOptions
+): Promise<LoadBalancer> {
+  await delay(500);
+  const mockIp = `10.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`;
+  console.log(`[dry-run] Would create load balancer: ${options.name} with ${options.serverIds.length} servers`);
+  return {
+    id: mockLoadBalancerId++,
+    name: options.name,
+    public_net: {
+      enabled: true,
+      ipv4: { ip: mockIp },
+      ipv6: { ip: "2001:db8::2" },
+    },
+    algorithm: { type: options.algorithm || "round_robin" },
+    services: [
+      { protocol: "tcp", listen_port: 80, destination_port: 80, proxyprotocol: false },
+      { protocol: "tcp", listen_port: 443, destination_port: 443, proxyprotocol: false },
+    ],
+    targets: options.serverIds.map((id) => ({ type: "server", server: { id } })),
+    load_balancer_type: { id: 1, name: "lb11", description: "LB11" },
+  };
+}
+
+export async function getLoadBalancer(
+  _token: string,
+  loadBalancerId: number
+): Promise<LoadBalancer> {
+  await delay(200);
+  return {
+    id: loadBalancerId,
+    name: "mock-lb",
+    public_net: {
+      enabled: true,
+      ipv4: { ip: "10.0.0.100" },
+      ipv6: { ip: "2001:db8::2" },
+    },
+    algorithm: { type: "round_robin" },
+    services: [],
+    targets: [],
+    load_balancer_type: { id: 1, name: "lb11", description: "LB11" },
+  };
+}
+
+export async function deleteLoadBalancer(
+  _token: string,
+  loadBalancerId: number
+): Promise<void> {
+  await delay(200);
+  console.log(`[dry-run] Would delete load balancer: ${loadBalancerId}`);
+}
+
+export async function addTargetToLoadBalancer(
+  _token: string,
+  loadBalancerId: number,
+  serverId: number
+): Promise<void> {
+  await delay(200);
+  console.log(`[dry-run] Would add server ${serverId} to load balancer ${loadBalancerId}`);
+}
+
+export async function removeTargetFromLoadBalancer(
+  _token: string,
+  loadBalancerId: number,
+  serverId: number
+): Promise<void> {
+  await delay(200);
+  console.log(`[dry-run] Would remove server ${serverId} from load balancer ${loadBalancerId}`);
+}
+
+export async function waitForLoadBalancer(
+  _token: string,
+  loadBalancerId: number,
+  _timeoutMs = 60000
+): Promise<LoadBalancer> {
+  await delay(500);
+  return getLoadBalancer(_token, loadBalancerId);
 }

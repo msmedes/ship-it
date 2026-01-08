@@ -13,6 +13,10 @@ export function Complete({ state, onDone }: CompleteProps) {
     }
   });
 
+  const serverCount = state.serverIps?.length || 1;
+  const isMultiServer = serverCount > 1;
+  const protocol = isMultiServer ? "http" : "https";
+
   return (
     <Box flexDirection="column">
       <Text bold color="green">
@@ -21,21 +25,40 @@ export function Complete({ state, onDone }: CompleteProps) {
 
       <Box marginTop={1} flexDirection="column" marginLeft={2}>
         <Text>
-          <Text dimColor>Server IP:</Text> {state.serverIp}
+          <Text dimColor>Server IPs:</Text> {state.serverIps?.join(", ")}
         </Text>
         <Text>
           <Text dimColor>Domain:</Text> {state.domain}
         </Text>
+        {state.loadBalancerIp && (
+          <Text>
+            <Text dimColor>Load Balancer IP:</Text> {state.loadBalancerIp}
+          </Text>
+        )}
         <Text>
-          <Text dimColor>Server ID:</Text> {state.serverId}
+          <Text dimColor>Servers:</Text> {serverCount}
         </Text>
+        {state.accessories?.enabled && (
+          <Text>
+            <Text dimColor>Accessories:</Text>{" "}
+            {state.accessories.accessories.map((a) => a.type).join(", ")}
+            {state.accessories.placement === "dedicated-server" && (
+              <Text dimColor> (dedicated server)</Text>
+            )}
+          </Text>
+        )}
       </Box>
 
       <Box marginTop={1} flexDirection="column">
         <Text bold>Your app is live at:</Text>
         <Box marginLeft={2}>
-          <Text color="cyan">https://{state.domain}</Text>
+          <Text color="cyan">{protocol}://{state.domain}</Text>
         </Box>
+        {isMultiServer && (
+          <Box marginLeft={2}>
+            <Text color="yellow" dimColor>(Multi-server: no auto-SSL)</Text>
+          </Box>
+        )}
       </Box>
 
       <Box marginTop={1} flexDirection="column">

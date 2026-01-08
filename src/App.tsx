@@ -3,9 +3,11 @@ import { Box, Text, useApp, useInput } from "ink";
 import { Welcome } from "./components/steps/Welcome.js";
 import { ConfigSetup } from "./components/steps/ConfigSetup.js";
 import { ServerConfig } from "./components/steps/ServerConfig.js";
+import { AccessoriesConfig } from "./components/steps/AccessoriesConfig.js";
 import { Deploy } from "./components/steps/Deploy.js";
 import { Complete } from "./components/steps/Complete.js";
 import { ErrorDisplay } from "./components/steps/ErrorDisplay.js";
+import type { AccessoriesConfig as AccessoriesConfigType } from "./lib/types.js";
 import { DashboardHome } from "./components/dashboard/DashboardHome.js";
 import { HetznerProvider } from "./lib/hetzner-context.js";
 import { initCleanup, runCleanup } from "./lib/cleanup.js";
@@ -19,6 +21,7 @@ export type WizardStep =
   | "welcome"
   | "config-setup"
   | "server-config"
+  | "accessories-config"
   | "deploy"
   | "complete"
   | "error";
@@ -28,9 +31,11 @@ export interface AppState {
   serverName?: string;
   location?: string;
   serverType?: string;
-  serverIp?: string;
-  serverId?: number;
+  serverCount?: number;
+  accessories?: AccessoriesConfigType;
+  serverIps?: string[];
   domain?: string;
+  loadBalancerIp?: string;
   error?: string;
 }
 
@@ -137,11 +142,22 @@ export function App({ mode }: AppProps) {
         {step === "server-config" && (
           <ServerConfig
             hetznerToken={state.config!.hetznerToken!}
-            onNext={(serverName, location, serverType) => {
-              updateState({ serverName, location, serverType });
-              setStep("deploy");
+            onNext={(serverName, location, serverType, serverCount) => {
+              updateState({ serverName, location, serverType, serverCount });
+              setStep("accessories-config");
             }}
             onBack={() => setStep("config-setup")}
+          />
+        )}
+
+        {step === "accessories-config" && (
+          <AccessoriesConfig
+            serverType={state.serverType!}
+            onNext={(accessories) => {
+              updateState({ accessories });
+              setStep("deploy");
+            }}
+            onBack={() => setStep("server-config")}
           />
         )}
 
@@ -151,11 +167,14 @@ export function App({ mode }: AppProps) {
             serverName={state.serverName!}
             location={state.location!}
             serverType={state.serverType!}
+            serverCount={state.serverCount || 1}
+            accessories={state.accessories}
             mode={mode}
             onComplete={(result) => {
               updateState({
-                serverIp: result.serverIp,
+                serverIps: result.serverIps,
                 domain: result.domain,
+                loadBalancerIp: result.loadBalancerIp,
               });
               setStep("complete");
             }}
@@ -174,7 +193,7 @@ export function App({ mode }: AppProps) {
           <ErrorDisplay
             error={state.error!}
             onRetry={() => setStep("deploy")}
-            onBack={() => setStep("server-config")}
+            onBack={() => setStep("accessories-config")}
           />
         )}
       </Box>
